@@ -1,29 +1,18 @@
+# flake8: noqa
 import asyncio
 import datetime
 import re
 from functools import lru_cache
-from typing import (
-    Any,
-    Awaitable,
-    Callable,
-    Dict,
-    Generic,
-    Iterable,
-    Iterator,
-    List,
-    Optional,
-    Tuple,
-    Type,
-    TypeVar,
-    Union,
-)
+from typing import Any, Awaitable, Callable, Dict, Generic, Iterable, Iterator, List, Optional, Tuple, Type, TypeVar, Union
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel
 from pydantic.fields import ModelField
 from pydantic.utils import deep_update
-from sqlalchemy import Column, Table, delete, insert
+from sqlalchemy import Column, Table, create_engine, delete, insert
+from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.orm import InstrumentedAttribute, RelationshipProperty
+from sqlalchemy.pool import NullPool
 from sqlalchemy.sql.elements import Label
 from sqlalchemy.util import md5_hex
 from sqlalchemy_database import AsyncDatabase, Database
@@ -59,28 +48,14 @@ from fastapi_amis_admin.amis.components import (
     Tpl,
 )
 from fastapi_amis_admin.amis.constants import DisplayModeEnum, LevelEnum, SizeEnum
-from fastapi_amis_admin.amis.types import (
-    AmisAPI,
-    AmisNode,
-    BaseAmisApiOut,
-    BaseAmisModel,
-    SchemaNode,
-)
+from fastapi_amis_admin.amis.types import AmisAPI, AmisNode, BaseAmisApiOut, BaseAmisModel, SchemaNode
 from fastapi_amis_admin.crud import RouterMixin, SQLModelCrud
 from fastapi_amis_admin.crud.base import SchemaCreateT, SchemaFilterT, SchemaUpdateT
-from fastapi_amis_admin.crud.parser import (
-    SQLModelFieldParser,
-    SQLModelListField,
-    get_python_type_parse,
-)
+from fastapi_amis_admin.crud.parser import SQLModelFieldParser, SQLModelListField, get_python_type_parse
 from fastapi_amis_admin.crud.schema import BaseApiOut, CrudEnum, Paginator
-from fastapi_amis_admin.crud.utils import (
-    SqlalchemyDatabase,
-    get_engine_db,
-    parser_str_set_list,
-    schema_create_by_schema,
-)
+from fastapi_amis_admin.crud.utils import SqlalchemyDatabase, get_engine_db, parser_str_set_list, schema_create_by_schema
 from fastapi_amis_admin.utils.functools import cached_property
+from fastapi_amis_admin.utils.sqlalchemy_session_middleware import SQLAlchemySessionMiddleware
 from fastapi_amis_admin.utils.translation import i18n as _
 
 BaseAdminT = TypeVar("BaseAdminT", bound="BaseAdmin")
@@ -156,7 +131,7 @@ class LinkModelForm:
                 .where(self.link_col.in_(list(map(get_python_type_parse(self.link_col), parser_str_set_list(link_id)))))
                 .where(self.item_col.in_(list(map(get_python_type_parse(self.item_col), item_id))))
             )
-            result = await self.pk_admin.db.async_execute(stmt)
+            result = await self.pk_admin.db.execute(stmt)
             return BaseApiOut(data=result.rowcount)  # type: ignore
 
         return route
@@ -1429,9 +1404,13 @@ class BaseAdminSite(AdminApp):
         if engine:
             self.engine = engine
         elif settings.database_url_async:
-            self.engine = AsyncDatabase.create(settings.database_url_async, echo=settings.debug)
+            self.engine = create_async_engine(
+                settings.database_url_async, connect_args={"server_settings": {"jit": "off"}}, poolclass=NullPool
+            )
+            # self.engine = AsyncDatabase.create(settings.database_url_async, echo=settings.debug)
         elif settings.database_url:
-            self.engine = Database.create(settings.database_url, echo=settings.debug)
+            # self.engine = Database.create(settings.database_url, echo=settings.debug)
+            self.engine = create_engine(settings.database_url)
         super().__init__(self)
 
     @cached_property
@@ -1445,7 +1424,9 @@ class BaseAdminSite(AdminApp):
         self.application = fastapi
         self.register_router()
         fastapi.mount(self.settings.site_path, self.fastapi, name=name)
-        fastapi.add_middleware(BaseHTTPMiddleware, dispatch=self.db.asgi_dispatch)
+        # fastapi.add_middleware(BaseHTTPMiddleware, dispatch=self.db.asgi_dispatch)
+        session_middleware = SQLAlchemySessionMiddleware(self.engine)
+        fastapi.add_middleware(BaseHTTPMiddleware, session_middleware)
         """Add SQLAlchemy Session middleware to the main application, and the session object will be bound to each request.
         Note:
         1. The session will be automatically closed when the request ends, so you don't need to close it manually.

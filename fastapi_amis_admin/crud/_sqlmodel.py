@@ -1,18 +1,7 @@
 import datetime
 import re
 from enum import Enum
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    Generic,
-    List,
-    Optional,
-    Pattern,
-    Tuple,
-    Type,
-    Union,
-)
+from typing import Any, Callable, Dict, Generic, List, Optional, Pattern, Tuple, Type, Union
 
 from fastapi import APIRouter, Body, Depends, Query
 from fastapi.encoders import DictIntStrAny, SetIntStr
@@ -21,6 +10,7 @@ from pydantic.fields import ModelField
 from pydantic.utils import ValueItems
 from sqlalchemy import Column, Table, func
 from sqlalchemy.engine import Result
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import InstrumentedAttribute, Session, object_session
 from sqlalchemy.sql import Select
@@ -32,27 +22,13 @@ try:
 except ImportError:
     from sqlalchemy.util.langhelpers import memoized_property as cached_property
 
-from .base import (
-    BaseCrud,
-    SchemaCreateT,
-    SchemaFilterT,
-    SchemaListT,
-    SchemaModelT,
-    SchemaReadT,
-    SchemaUpdateT,
-)
-from .parser import (
-    SqlField,
-    SQLModelField,
-    SQLModelFieldParser,
-    SQLModelListField,
-    SQLModelPropertyField,
-    get_python_type_parse,
-)
+from .base import BaseCrud, SchemaCreateT, SchemaFilterT, SchemaListT, SchemaModelT, SchemaReadT, SchemaUpdateT
+from .parser import SqlField, SQLModelField, SQLModelFieldParser, SQLModelListField, SQLModelPropertyField, get_python_type_parse
 from .schema import BaseApiOut, ItemListSchema
 from .utils import (
     SqlalchemyDatabase,
     get_engine_db,
+    get_engine_db_session,
     parser_item_id,
     parser_str_set_list,
     schema_create_by_modelfield,
@@ -166,7 +142,7 @@ class SQLModelSelector(Generic[SchemaModelT]):
         link_item_id: Union[int, str] = Query(
             None,
             title="pk",
-            example="1,2,3",
+            example="uuid1,uuid2,uuid3",
             description="Link Model Primary key or list of primary keys",
         ),
     ) -> Optional[Any]:
@@ -253,7 +229,7 @@ class SQLModelCrud(BaseCrud, SQLModelSelector):
     ) -> None:
         self.engine = engine or self.engine
         assert self.engine, "engine is None"
-        self.db = get_engine_db(self.engine)
+        self.db: AsyncSession = get_engine_db_session(self.engine)
         SQLModelSelector.__init__(self, model, fields)
         BaseCrud.__init__(self, self.model, router)
         # if self.readonly_fields:
@@ -374,7 +350,7 @@ class SQLModelCrud(BaseCrud, SQLModelSelector):
 
     async def fetch_items(self, *item_id: str) -> List[SchemaModelT]:
         """Fetch the database data by id."""
-        return await self.db.async_run_sync(self._fetch_item_scalars, item_id)
+        return await self.db.run_sync(self._fetch_item_scalars, item_id)
 
     def _create_items(self, session: Session, items: List[Dict[str, Any]]) -> Union[int, SchemaModelT]:
         count = len(items)
@@ -444,7 +420,7 @@ class SQLModelCrud(BaseCrud, SQLModelSelector):
             item_id: List[str] = Depends(parser_item_id),
             stmt: Select = Depends(self._select_maker),
         ):
-            filtered_id = await self.db.async_scalars(stmt.where(self.pk.in_(item_id)).with_only_columns([self.pk]))
+            filtered_id = await self.db.scalars(stmt.where(self.pk.in_(item_id)).with_only_columns([self.pk]))
             return filtered_id.all()
 
         return depend
@@ -465,14 +441,14 @@ class SQLModelCrud(BaseCrud, SQLModelSelector):
             if data.filters:
                 stmt = stmt.filter(*self.calc_filter_clause(data.filters))
             if paginator.show_total:
-                data.total = await self.db.async_scalar(
+                data.total = await self.db.scalar(
                     select(func.count("*")).select_from(stmt.with_only_columns([self.pk]).subquery())
                 )
             orderBy = self._calc_ordering(paginator.orderBy, paginator.orderDir)
             if orderBy:
                 stmt = stmt.order_by(*orderBy)
             stmt = stmt.limit(paginator.perPage).offset((paginator.page - 1) * paginator.perPage)
-            result = await self.db.async_execute(stmt)
+            result = await self.db.execute(stmt)
             return BaseApiOut(data=await self.on_list_after(request, result, data))
 
         return route
@@ -491,7 +467,7 @@ class SQLModelCrud(BaseCrud, SQLModelSelector):
             if not items:
                 return self.error_data_handle(request)
             try:
-                result = await self.db.async_run_sync(self._create_items, items=items)
+                result = await self.db.run_sync(self._create_items, items=items)
             except Exception as error:
                 return self.error_execute_sql(request=request, error=error)
             return BaseApiOut(data=result)
@@ -506,7 +482,7 @@ class SQLModelCrud(BaseCrud, SQLModelSelector):
         ):
             if not await self.has_read_permission(request, item_id):
                 return self.error_no_router_permission(request)
-            items = await self.db.async_run_sync(self._read_items, item_id)
+            items = await self.db.run_sync(self._read_items, item_id)
             if len(items) == 1:
                 items = items[0]
             return BaseApiOut(data=items)
@@ -526,7 +502,7 @@ class SQLModelCrud(BaseCrud, SQLModelSelector):
             values = await self.on_update_pre(request, data, item_id=item_id)
             if not values:
                 return self.error_data_handle(request)
-            result = await self.db.async_run_sync(self._update_items, item_id, values)
+            result = await self.db.run_sync(self._update_items, item_id, values)
             return BaseApiOut(data=result)
 
         return route
@@ -539,7 +515,7 @@ class SQLModelCrud(BaseCrud, SQLModelSelector):
         ):
             if not await self.has_delete_permission(request, item_id):
                 return self.error_no_router_permission(request)
-            result = await self.db.async_run_sync(self._delete_items, item_id)
+            result = await self.db.run_sync(self._delete_items, item_id)
             return BaseApiOut(data=result)
 
         return route

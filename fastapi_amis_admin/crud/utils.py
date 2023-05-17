@@ -7,12 +7,14 @@ from pydantic import BaseConfig, BaseModel, Extra
 from pydantic.fields import ModelField
 from pydantic.main import ModelMetaclass
 from sqlalchemy.engine import Engine
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_scoped_session
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy_database import AsyncDatabase, Database
 
 from .schema import BaseApiSchema
 
 SqlalchemyDatabase = Union[Engine, AsyncEngine, Database, AsyncDatabase]
+EngineType = Union[Engine, AsyncEngine]
 
 
 def validator_skip_blank(cls, v, config: BaseConfig, field: ModelField, *args, **kwargs):
@@ -99,3 +101,8 @@ def get_engine_db(engine: SqlalchemyDatabase) -> Union[Database, AsyncDatabase]:
     if isinstance(engine, AsyncEngine):
         return AsyncDatabase(engine)
     raise TypeError(f"Unknown engine type: {type(engine)}")
+
+
+def get_engine_db_session(engine: EngineType) -> AsyncSession:
+    async_session = async_scoped_session(sessionmaker(engine, expire_on_commit=False, class_=AsyncSession))
+    return async_session()
