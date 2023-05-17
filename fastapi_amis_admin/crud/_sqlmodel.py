@@ -1,3 +1,4 @@
+# flake8: noqa
 import datetime
 import re
 from enum import Enum
@@ -352,15 +353,15 @@ class SQLModelCrud(BaseCrud, SQLModelSelector):
         """Fetch the database data by id."""
         return await self.db.run_sync(self._fetch_item_scalars, item_id)
 
-    def _create_items(self, session: Session, items: List[Dict[str, Any]]) -> Union[int, SchemaModelT]:
+    async def _create_items(self, session: AsyncSession, items: List[Dict[str, Any]]) -> Union[int, SchemaModelT]:
         count = len(items)
         obj = None
         for item in items:
             obj = self.create_item(item)
             session.add(obj)
         if count == 1:
-            session.flush()
-            session.refresh(obj)
+            await session.commit()
+            await session.refresh(obj)
             return self.schema_model.parse_obj(obj)
         return count
 
@@ -467,7 +468,9 @@ class SQLModelCrud(BaseCrud, SQLModelSelector):
             if not items:
                 return self.error_data_handle(request)
             try:
-                result = await self.db.run_sync(self._create_items, items=items)
+                # result = await self.db.run_sync(self._create_items, items=items)
+                result = await self._create_items(self.db, items=items)
+
             except Exception as error:
                 return self.error_execute_sql(request=request, error=error)
             return BaseApiOut(data=result)

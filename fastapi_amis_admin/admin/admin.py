@@ -1426,7 +1426,7 @@ class BaseAdminSite(AdminApp):
         fastapi.mount(self.settings.site_path, self.fastapi, name=name)
         # fastapi.add_middleware(BaseHTTPMiddleware, dispatch=self.db.asgi_dispatch)
         session_middleware = SQLAlchemySessionMiddleware(self.engine)
-        fastapi.add_middleware(BaseHTTPMiddleware, session_middleware)
+        fastapi.add_middleware(BaseHTTPMiddleware, dispatch=session_middleware)
         """Add SQLAlchemy Session middleware to the main application, and the session object will be bound to each request.
         Note:
         1. The session will be automatically closed when the request ends, so you don't need to close it manually.

@@ -1,3 +1,5 @@
+from uuid import UUID, uuid4
+
 from fastapi import FastAPI
 from sqlmodel import SQLModel
 
@@ -10,12 +12,12 @@ from fastapi_amis_admin.models.fields import Field
 app = FastAPI()
 
 # 创建AdminSite实例
-site = AdminSite(settings=Settings(database_url_async="sqlite+aiosqlite:///amisadmin.db?check_same_thread=False"))
+site = AdminSite(settings=Settings(database_url_async="postgresql+asyncpg://postgres:somepass1@0.0.0.0:7890/postgres"))
 
 
 # 先创建一个SQLModel模型,详细请参考: https://sqlmodel.tiangolo.com/
 class Category(SQLModel, table=True):
-    id: int = Field(default=None, primary_key=True, nullable=False)
+    id: UUID = Field(default_factory=uuid4, primary_key=True, nullable=False)
     name: str = Field(title="CategoryName")
     description: str = Field(default="", title="Description")
 
@@ -41,4 +43,4 @@ async def startup():
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, debug=True)
+    uvicorn.run(app, port=8003)

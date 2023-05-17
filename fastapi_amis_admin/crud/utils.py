@@ -103,6 +103,17 @@ def get_engine_db(engine: SqlalchemyDatabase) -> Union[Database, AsyncDatabase]:
     raise TypeError(f"Unknown engine type: {type(engine)}")
 
 
+def get_event_loop():
+    import asyncio
+
+    loop = asyncio.get_event_loop()
+    task = asyncio.current_task(loop)
+    return task
+
+
 def get_engine_db_session(engine: EngineType) -> AsyncSession:
-    async_session = async_scoped_session(sessionmaker(engine, expire_on_commit=False, class_=AsyncSession))
+    async_session = async_scoped_session(
+        sessionmaker(engine, expire_on_commit=False, class_=AsyncSession),
+        scopefunc=get_event_loop,
+    )
     return async_session()
