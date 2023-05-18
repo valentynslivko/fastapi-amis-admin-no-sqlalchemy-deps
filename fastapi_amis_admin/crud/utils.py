@@ -1,3 +1,4 @@
+from contextvars import ContextVar
 from enum import Enum
 from typing import Any, Dict, Iterable, List, Set, Type, Union
 
@@ -9,11 +10,10 @@ from pydantic.main import ModelMetaclass
 from sqlalchemy.engine import Engine
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_scoped_session
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy_database import AsyncDatabase, Database
+from sqlalchemy_database import AsyncDatabase
 
 from .schema import BaseApiSchema
 
-SqlalchemyDatabase = Union[Engine, AsyncEngine, Database, AsyncDatabase]
 EngineType = Union[Engine, AsyncEngine]
 
 
@@ -93,16 +93,6 @@ def parser_item_id(
     return parser_str_set_list(set_str=item_id)
 
 
-def get_engine_db(engine: SqlalchemyDatabase) -> Union[Database, AsyncDatabase]:
-    if isinstance(engine, (Database, AsyncDatabase)):
-        return engine
-    if isinstance(engine, Engine):
-        return Database(engine)
-    if isinstance(engine, AsyncEngine):
-        return AsyncDatabase(engine)
-    raise TypeError(f"Unknown engine type: {type(engine)}")
-
-
 def get_event_loop():
     import asyncio
 
@@ -111,9 +101,11 @@ def get_event_loop():
     return task
 
 
+# def get_scope():
+#     context = ContextVar(f"_session_context_var_{id(self)}", default=None)
+
+
 def get_engine_db_session(engine: EngineType) -> AsyncSession:
-    async_session = async_scoped_session(
-        sessionmaker(engine, expire_on_commit=False, class_=AsyncSession),
-        scopefunc=get_event_loop,
-    )
+    async_session = sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+
     return async_session()

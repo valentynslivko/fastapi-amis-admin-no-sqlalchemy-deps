@@ -11,7 +11,7 @@ from pydantic.fields import ModelField
 from pydantic.utils import ValueItems
 from sqlalchemy import Column, Table, func
 from sqlalchemy.engine import Result
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import InstrumentedAttribute, Session, object_session
 from sqlalchemy.sql import Select
@@ -26,14 +26,7 @@ except ImportError:
 from .base import BaseCrud, SchemaCreateT, SchemaFilterT, SchemaListT, SchemaModelT, SchemaReadT, SchemaUpdateT
 from .parser import SqlField, SQLModelField, SQLModelFieldParser, SQLModelListField, SQLModelPropertyField, get_python_type_parse
 from .schema import BaseApiOut, ItemListSchema
-from .utils import (
-    SqlalchemyDatabase,
-    get_engine_db,
-    get_engine_db_session,
-    parser_item_id,
-    parser_str_set_list,
-    schema_create_by_modelfield,
-)
+from .utils import get_engine_db_session, parser_item_id, parser_str_set_list, schema_create_by_modelfield
 
 sql_operator_pattern: Pattern = re.compile(r"^\[(=|<=|<|>|>=|!|!=|<>|\*|!\*|~|!~|-)]")
 sql_operator_map: Dict[str, str] = {
@@ -208,7 +201,7 @@ class SQLModelSelector(Generic[SchemaModelT]):
 
 
 class SQLModelCrud(BaseCrud, SQLModelSelector):
-    engine: SqlalchemyDatabase = None  # sqlalchemy engine
+    engine: AsyncEngine = None  # sqlalchemy engine
     create_fields: List[SQLModelField] = []  # Create item data field
     readonly_fields: List[SQLModelListField] = []
     """readonly fields, priority is higher than update_fields.
@@ -224,7 +217,7 @@ class SQLModelCrud(BaseCrud, SQLModelSelector):
     def __init__(
         self,
         model: Type[SchemaModelT],
-        engine: SqlalchemyDatabase,
+        engine: AsyncEngine,
         fields: List[SQLModelListField] = None,
         router: APIRouter = None,
     ) -> None:
@@ -345,13 +338,15 @@ class SQLModelCrud(BaseCrud, SQLModelSelector):
         """Parse the database data query result dictionary into schema_list."""
         return self.schema_list.parse_obj(values)
 
-    def _fetch_item_scalars(self, session: Session, item_id: List[str]) -> List[SchemaModelT]:
+    async def _fetch_item_scalars(self, session: AsyncSession, item_id: List[str]) -> List[SchemaModelT]:
         stmt = select(self.model).where(self.pk.in_(list(map(get_python_type_parse(self.pk), item_id))))
-        return session.scalars(stmt).all()
+        scalars = await session.scalars(stmt)
+        return scalars.all()
 
     async def fetch_items(self, *item_id: str) -> List[SchemaModelT]:
         """Fetch the database data by id."""
-        return await self.db.run_sync(self._fetch_item_scalars, item_id)
+        # return await self.db.run_sync(self._fetch_item_scalars, item_id)
+        return await self._fetch_item_scalars(self.db, item_id)
 
     async def _create_items(self, session: AsyncSession, items: List[Dict[str, Any]]) -> Union[int, SchemaModelT]:
         count = len(items)
@@ -365,20 +360,22 @@ class SQLModelCrud(BaseCrud, SQLModelSelector):
             return self.schema_model.parse_obj(obj)
         return count
 
-    def _read_items(self, session: Session, item_id: List[str]) -> List[SchemaReadT]:
-        items = self._fetch_item_scalars(session, item_id)
+    async def _read_items(self, session: AsyncSession, item_id: List[str]) -> List[SchemaReadT]:
+        items = await self._fetch_item_scalars(session, item_id)
         return [self.read_item(obj) for obj in items]
 
-    def _update_items(self, session: Session, item_id: List[str], values: Dict[str, Any]):
-        items = self._fetch_item_scalars(session, item_id)
+    async def _update_items(self, session: AsyncSession, item_id: List[str], values: Dict[str, Any]):
+        items = await self._fetch_item_scalars(session, item_id)
         for item in items:
             self.update_item(item, values)
+        await session.commit()
         return len(items)
 
-    def _delete_items(self, session: Session, item_id: List[str]) -> int:
-        items = self._fetch_item_scalars(session, item_id)
+    async def _delete_items(self, session: AsyncSession, item_id: List[str]) -> int:
+        items = await self._fetch_item_scalars(session, item_id)
         for item in items:
             self.delete_item(item)
+        await session.commit()
         return len(items)
 
     @property
@@ -485,7 +482,8 @@ class SQLModelCrud(BaseCrud, SQLModelSelector):
         ):
             if not await self.has_read_permission(request, item_id):
                 return self.error_no_router_permission(request)
-            items = await self.db.run_sync(self._read_items, item_id)
+            # items = await self.db.run_sync(self._read_items, item_id)
+            items = await self._read_items(self.db, item_id)
             if len(items) == 1:
                 items = items[0]
             return BaseApiOut(data=items)
@@ -505,7 +503,8 @@ class SQLModelCrud(BaseCrud, SQLModelSelector):
             values = await self.on_update_pre(request, data, item_id=item_id)
             if not values:
                 return self.error_data_handle(request)
-            result = await self.db.run_sync(self._update_items, item_id, values)
+            # result = await self.db.run_sync(self._update_items, item_id, values)
+            result = await self._update_items(self.db, item_id, values)
             return BaseApiOut(data=result)
 
         return route
@@ -518,7 +517,7 @@ class SQLModelCrud(BaseCrud, SQLModelSelector):
         ):
             if not await self.has_delete_permission(request, item_id):
                 return self.error_no_router_permission(request)
-            result = await self.db.run_sync(self._delete_items, item_id)
+            result = await self._delete_items(self.db, item_id)
             return BaseApiOut(data=result)
 
         return route

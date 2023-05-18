@@ -7,6 +7,7 @@ from pathlib import Path
 import aiofiles
 from fastapi import FastAPI, File, UploadFile
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncEngine
 from starlette.requests import Request
 from starlette.staticfiles import StaticFiles
 
@@ -16,7 +17,6 @@ from fastapi_amis_admin.admin import AdminApp, admin
 from fastapi_amis_admin.admin.settings import Settings
 from fastapi_amis_admin.amis.components import Page, PageSchema, Property
 from fastapi_amis_admin.crud.schema import BaseApiOut
-from fastapi_amis_admin.crud.utils import SqlalchemyDatabase
 from fastapi_amis_admin.utils.translation import i18n as _
 
 
@@ -137,7 +137,7 @@ class AdminSite(admin.BaseAdminSite):
         self,
         settings: Settings,
         fastapi: FastAPI = None,
-        engine: SqlalchemyDatabase = None,
+        engine: AsyncEngine = None,
     ):
         super().__init__(settings, fastapi, engine)
         self.register_admin(

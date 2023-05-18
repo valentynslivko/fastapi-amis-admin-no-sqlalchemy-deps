@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from pydantic.fields import ModelField
 from pydantic.utils import deep_update
 from sqlalchemy import Column, Table, create_engine, delete, insert
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.orm import InstrumentedAttribute, RelationshipProperty
 from sqlalchemy.pool import NullPool
 from sqlalchemy.sql.elements import Label
@@ -53,7 +53,7 @@ from fastapi_amis_admin.crud import RouterMixin, SQLModelCrud
 from fastapi_amis_admin.crud.base import SchemaCreateT, SchemaFilterT, SchemaUpdateT
 from fastapi_amis_admin.crud.parser import SQLModelFieldParser, SQLModelListField, get_python_type_parse
 from fastapi_amis_admin.crud.schema import BaseApiOut, CrudEnum, Paginator
-from fastapi_amis_admin.crud.utils import SqlalchemyDatabase, get_engine_db, parser_str_set_list, schema_create_by_schema
+from fastapi_amis_admin.crud.utils import get_engine_db_session, parser_str_set_list, schema_create_by_schema
 from fastapi_amis_admin.utils.functools import cached_property
 from fastapi_amis_admin.utils.sqlalchemy_session_middleware import SQLAlchemySessionMiddleware
 from fastapi_amis_admin.utils.translation import i18n as _
@@ -162,7 +162,7 @@ class LinkModelForm:
                 )
             stmt = insert(self.link_model).values(values)
             try:
-                result = await self.pk_admin.db.async_execute(stmt)
+                result = await self.pk_admin.db.execute(stmt)
             except Exception as error:
                 return self.pk_admin.error_execute_sql(request=request, error=error)
             return BaseApiOut(data=result.rowcount)  # type: ignore
@@ -1270,14 +1270,14 @@ class AdminGroup(PageSchemaAdmin):
 class AdminApp(PageAdmin, AdminGroup):
     """Manage applications"""
 
-    engine: SqlalchemyDatabase = None
+    engine: AsyncEngine = None
     page_path = "/"
 
     def __init__(self, app: "AdminApp"):
         PageAdmin.__init__(self, app)
         AdminGroup.__init__(self, app)
         self.engine = self.engine or self.app.engine
-        self.db = get_engine_db(self.engine)
+        self.db = get_engine_db_session(self.engine)
         self._registered: Dict[Type[BaseAdminT], Optional[BaseAdminT]] = {}
         self.__register_lock = False
 
@@ -1384,7 +1384,7 @@ class BaseAdminSite(AdminApp):
         self,
         settings: Settings,
         fastapi: FastAPI = None,
-        engine: SqlalchemyDatabase = None,
+        engine: AsyncEngine = None,
     ):
         self.application = None
         try:
@@ -1409,8 +1409,9 @@ class BaseAdminSite(AdminApp):
             )
             # self.engine = AsyncDatabase.create(settings.database_url_async, echo=settings.debug)
         elif settings.database_url:
-            # self.engine = Database.create(settings.database_url, echo=settings.debug)
-            self.engine = create_engine(settings.database_url)
+            raise NotImplementedError()
+        #     # self.engine = Database.create(settings.database_url, echo=settings.debug)
+        #     self.engine = create_engine(settings.database_url)
         super().__init__(self)
 
     @cached_property
@@ -1425,8 +1426,8 @@ class BaseAdminSite(AdminApp):
         self.register_router()
         fastapi.mount(self.settings.site_path, self.fastapi, name=name)
         # fastapi.add_middleware(BaseHTTPMiddleware, dispatch=self.db.asgi_dispatch)
-        session_middleware = SQLAlchemySessionMiddleware(self.engine)
-        fastapi.add_middleware(BaseHTTPMiddleware, dispatch=session_middleware)
+        # session_middleware = SQLAlchemySessionMiddleware(self.engine)
+        # fastapi.add_middleware(BaseHTTPMiddleware, dispatch=session_middleware)
         """Add SQLAlchemy Session middleware to the main application, and the session object will be bound to each request.
         Note:
         1. The session will be automatically closed when the request ends, so you don't need to close it manually.
